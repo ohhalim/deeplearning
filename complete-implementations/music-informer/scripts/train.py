@@ -104,14 +104,34 @@ def main(args):
 
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
-    # Dataset (simplified - use your actual MAESTRO loader)
-    # from data.dataset import MAESTRODataset
-    # train_dataset = MAESTRODataset(args.data_dir, split='train')
-    # val_dataset = MAESTRODataset(args.data_dir, split='validation')
+    # Dataset
+    from data.dataset import MAESTRODataset, collate_fn
 
-    # For now, placeholder
-    print("Note: Using placeholder dataset")
-    print("Replace with actual MAESTRO loader!")
+    print("\nLoading datasets...")
+    train_dataset = MAESTRODataset(args.data_dir, split='train', max_seq_len=2048)
+    val_dataset = MAESTRODataset(args.data_dir, split='validation', max_seq_len=2048)
+
+    print(f"Train dataset: {len(train_dataset)} samples")
+    print(f"Val dataset: {len(val_dataset)} samples")
+
+    # DataLoaders
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        collate_fn=collate_fn,
+        num_workers=2,
+        pin_memory=True
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        collate_fn=collate_fn,
+        num_workers=2,
+        pin_memory=True
+    )
 
     # Optimizer (Adam as in paper)
     optimizer = torch.optim.Adam(
@@ -138,28 +158,34 @@ def main(args):
         print(f"\nEpoch {epoch}/{args.num_epochs}")
 
         # Train
-        # train_loss = train_epoch(model, train_loader, optimizer, criterion, device, epoch)
-        # print(f"Train Loss: {train_loss:.4f}")
+        train_loss = train_epoch(model, train_loader, optimizer, criterion, device, epoch)
+        print(f"Train Loss: {train_loss:.4f}")
 
         # Validate
-        # val_loss = validate(model, val_loader, criterion, device)
-        # print(f"Val Loss: {val_loss:.4f}")
-        # perplexity = torch.exp(torch.tensor(val_loss))
-        # print(f"Perplexity: {perplexity:.2f}")
+        val_loss = validate(model, val_loader, criterion, device)
+        print(f"Val Loss: {val_loss:.4f}")
+        perplexity = torch.exp(torch.tensor(val_loss))
+        print(f"Perplexity: {perplexity:.2f}")
+
+        # WandB logging
+        if args.use_wandb:
+            wandb.log({
+                'epoch': epoch,
+                'train_loss': train_loss,
+                'val_loss': val_loss,
+                'perplexity': perplexity
+            })
 
         # Save best
-        # if val_loss < best_val_loss:
-        #     best_val_loss = val_loss
-        #     torch.save({
-        #         'epoch': epoch,
-        #         'model_state_dict': model.state_dict(),
-        #         'optimizer_state_dict': optimizer.state_dict(),
-        #         'val_loss': val_loss,
-        #     }, args.output_dir / 'best.pt')
-        #     print(f"Saved best model! Val loss: {val_loss:.4f}")
-
-        print("\n[Placeholder] Training loop not executed")
-        print("Add your MAESTRO dataset and uncomment training code!")
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'val_loss': val_loss,
+            }, args.output_dir / 'best.pt')
+            print(f"✅ Saved best model! Val loss: {val_loss:.4f}")
 
     print("\nTraining complete!")
 

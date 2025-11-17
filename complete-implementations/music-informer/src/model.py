@@ -298,7 +298,11 @@ class RelativeLocalAttention(nn.Module):
 
         # (batch, heads, seq_len, d_k) @ (seq_len, seq_len, d_k)
         # → (batch, heads, seq_len, seq_len)
-        relative_scores = torch.einsum('bhld,lrd->bhlr', Q, relative_k.unsqueeze(0))
+        # Expand Q: (batch, heads, seq_len, 1, d_k)
+        # Expand relative_k: (1, 1, seq_len, seq_len, d_k)
+        Q_expanded = Q.unsqueeze(3)  # (batch, heads, seq_len, 1, d_k)
+        relative_k_expanded = relative_k.unsqueeze(0).unsqueeze(0)  # (1, 1, seq_len, seq_len, d_k)
+        relative_scores = (Q_expanded * relative_k_expanded).sum(dim=-1)  # (batch, heads, seq_len, seq_len)
         scores = scores + relative_scores / math.sqrt(self.d_k)
 
         # Mask
@@ -475,10 +479,14 @@ class MusicInformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def generate_square_subsequent_mask(self, sz: int) -> torch.Tensor:
-        """Causal mask"""
-        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
-        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+    def generate_square_subsequent_mask(self, sz: int, device) -> torch.Tensor:
+        """
+        Causal mask for autoregressive generation
+
+        Returns: (1, 1, sz, sz)
+        """
+        mask = torch.triu(torch.ones(sz, sz, device=device), diagonal=1)
+        mask = mask.masked_fill(mask == 1, 0).unsqueeze(0).unsqueeze(0)
         return mask
 
     def forward(
@@ -489,19 +497,20 @@ class MusicInformer(nn.Module):
         """
         Args:
             src: (batch, seq_len) - token indices
-            src_mask: (seq_len, seq_len) - causal mask
+            src_mask: (batch, 1, seq_len, seq_len) or None - causal mask
 
         Returns:
             output: (batch, seq_len, vocab_size) - logits
         """
+        batch_size, seq_len = src.shape
+
         # Embedding
         src = self.embedding(src) * math.sqrt(self.d_model)
         src = self.pos_encoding(src)
 
         # Causal mask
         if src_mask is None:
-            device = src.device
-            src_mask = self.generate_square_subsequent_mask(src.size(1)).to(device)
+            src_mask = self.generate_square_subsequent_mask(seq_len, src.device)
 
         # Encoder layers
         for layer in self.layers:
